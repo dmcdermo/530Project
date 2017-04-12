@@ -1,0 +1,75 @@
+---
+title: "Analysis of Goal Line Plays in the NFL"
+author: 'David Edison, Ahmed Raza, Patrick McDermott, Helen Wang'
+runtime: shiny
+output: slidy_presentation
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+library(shiny);library(ggplot2);library(pander)
+library(knitr);library(dplyr)
+
+data <- read.csv("nfl-data.csv")
+```
+## Motivations
+
+## Related Work
+
+## Data
+
+## Distributions for Numeric Variables
+
+```{r, echo = FALSE}
+data_num <- read.csv("nfl-data.csv")[,7:14]
+
+colnames(data_num) <- c("Down","Yards_To_Endzone","Team_Points","Opponent_Points",
+                        "Yards_Gained","EP_Before","EP_After","EP_Added")
+
+selectInput("var", "Variable of Interest:", choices = colnames(data_num))
+
+sliderInput("bins","Number of Bins",min=4,max=30,value=20)
+
+varnames <- reactive({
+if ("Down" %in% input$var) return(data_num$Down)
+if ("Yards_To_Endzone" %in% input$var) return(data_num$Yards_To_Endzone)
+if ("Team_Points" %in% input$var) return(data_num$Team_Points)
+if ("Opponent_Points" %in% input$var) return(data_num$Opponent_Points)
+if ("Yards_Gained" %in% input$var) return(data_num$Yards_Gained)
+if ("EP_Before" %in% input$var) return(data_num$EP_Before)
+if ("EP_After" %in% input$var) return(data_num$EP_After)
+if ("EP_Added" %in% input$var) return(data_num$EP_Added)
+})
+
+renderPlot({
+  ggplot(data_num, aes(varnames()))+
+    geom_histogram(col="black",fill="lightblue", bins = input$bins)+
+    labs(x='',y='Count')+
+    scale_x_continuous()
+})
+```
+
+## Summary of other Variables
+
+Percentage of each type of play 
+```{r}
+Result <- colnames(data)[c(24,20,16,23,17)]
+
+Percent <- sapply(c(24,20,16,23,17), function(x) paste0(round(100*mean(data[[x]]),2),"%"))
+
+data.frame(Result,Percent) 
+```
+
+Middle vs. Left. vs Right
+```{r}
+midleftright <- data %>% 
+  filter(!is.na(direction)) %>% 
+  count(direction)
+  
+colnames(midleftright) <- c("Direction","Count")
+
+data.frame(midleftright)
+```
