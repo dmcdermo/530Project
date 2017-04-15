@@ -15,6 +15,11 @@ library(knitr);library(dplyr)
 
 data <- read.csv("nfl-data.csv")
 ```
+## Football at a Glance
+- 4 trials to move 10 yards, if successful process is repeated until the goal line
+- Two methods of moving: pass or rush (rush can be: middle, left or right)
+- Two methods of scoring: Touchdown (7 points), Field Goal (3 points)
+- If not in scoring position on the fourth trial options are to kick field goal or punt (defer possession of ball to other team)
 
 ## Motivations
 
