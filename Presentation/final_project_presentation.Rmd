@@ -22,6 +22,9 @@ data <- read.csv("nfl-data.csv")
 - If not in scoring position on the fourth trial options are to kick field goal or punt (defer possession of ball to other team)
 
 ## Motivations
+- Determine optimal strategy for goal to go situations (final 10 yards)
+- Given down, distance, and previous plays: provide optimal decision for coach 
+- Maximize expected points per play given any situation
 
 ## Related Work
 
