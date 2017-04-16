@@ -2,7 +2,9 @@
 title: "Analysis of Goal Line Plays in the NFL"
 author: 'David Edison, Ahmed Raza, Patrick McDermott, Helen Wang'
 runtime: shiny
-output: slidy_presentation
+output: 
+  slidy_presentation:
+    theme: cosmo
 ---
 
 ```{r global_options, include=FALSE}
@@ -10,29 +12,61 @@ knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
 ```
 
 ```{r}
-library(shiny);library(ggplot2);library(pander)
-library(knitr);library(dplyr)
+library(shiny);library(ggplot2);library(pander);library(class)
+library(knitr);library(dplyr);library(broom)
+library(stringr);library(caret);library(MASS)
 
 data <- read.csv("nfl-data.csv")
 ```
+
 ## Football at a Glance
+
 - 4 trials to move 10 yards, if successful process is repeated until the goal line
 - Two methods of moving: pass or rush (rush can be: middle, left or right)
 - Two methods of scoring: Touchdown (7 points), Field Goal (3 points)
 - If not in scoring position on the fourth trial options are to kick field goal or punt (defer possession of ball to other team)
 
-## Motivations
+## Motivations/Strategy
+
+**Motivations**
+
+- Professional football is a billion dollar industry, and many in game decisions are suboptimal
+- Of the three biggest sports in the US, football is currently the least analytics-driven, so there are massive opportunities for teams to improve
+- Goal-to-go scenarios are the most high-leverage in football, so improvements in this area could provide massive benefits
+
+**Business Strategy**
+
 - Determine optimal strategy for goal to go situations (final 10 yards)
 - Given down, distance, and previous plays: provide optimal decision for coach 
-- Maximize expected points per play given any situation
+- Provide basic strategy that will maximize expected points per play given any situation
+- Validate results using machine learning techniques to predict whether or not a play resulted in a touchdown
 
 ## Related Work
 
+- David Romer 2006 paper [Do Firms Maximize? Evidence from Professional Football](http://eml.berkeley.edu//~dromer/papers/JPE_April06.pdf)
+
+- Brian Burke at [Advanced Football Analytics](http://www.advancedfootballanalytics.com/) (Creator of Expected Points Added statistic which we used in our analysis)
+
 ## Data
+
+- Queried data from [pro football reference play finder](http://www.pro-football-reference.com/play-index/play_finder.cgi)
+
+- In 2010 to 2016, any team vs. any team, in the regular season, play type is pass or rush or punt or field goal, in the first or third quarter, goal to go, scoring margin is between -14 and 14
+
+- Added new columns to data set based on the "Description" column in original
+
+- 2916 observations, 25 variables
+
+- List of variables:
+
+```{r}
+colnames(data)
+```
+
 
 ## Distributions for Numeric Variables
 
-```{r, echo = FALSE}
+```{r}
 data_num <- read.csv("nfl-data.csv")[,7:14]
 
 colnames(data_num) <- c("Down","Yards_To_Endzone","Team_Points","Opponent_Points",
@@ -72,7 +106,7 @@ Percent <- sapply(c(24,20,16,23,17), function(x) paste0(round(100*mean(data[[x]]
 data.frame(Result,Percent) 
 ```
 
-Middle vs. Left. vs Right
+Middle vs. Left vs. Right
 ```{r}
 midleftright <- data %>% 
   filter(!is.na(direction)) %>% 
@@ -83,6 +117,347 @@ colnames(midleftright) <- c("Direction","Count")
 data.frame(midleftright)
 ```
 
+Touchdown Percentage by Down
+```{r}
+tdperc <- data %>% 
+  group_by(down) %>% 
+  summarise(x = mean(touchdown)) %>% 
+  mutate(percent_touchdown = paste(round(100*x,2),"%")) %>% 
+  dplyr::select(down, percent_touchdown)
+
+data.frame(tdperc)
+```
+
+## Regression Analysis
+
+```{r}
+nofgdata <- data %>% 
+  filter(field_goal_good ==F,
+         field_goal_no_good == F)
+
+rushdata <- nofgdata %>% 
+  filter(rush)
+
+passdata <- nofgdata %>% 
+  filter(pass)
+```
+
+EPA regressed on Down, Yards to go, Rush, Quarter, and Direction
+```{r}
+nofgdata$quarter <- factor(nofgdata$quarter)
+
+linear_model1 <- lm(exp_pts_diff~down+togo+rush+quarter+direction, data = nofgdata)
+
+tidy(linear_model1)
+```
+
+EPA regressed on Down, Yards to go, Quarter, and Direction for rush plays only
+```{r}
+linear_model2 <- lm(exp_pts_diff~down+togo+quarter+direction, data = rushdata)
+
+tidy(linear_model2)
+```
+
+EPA regressed on Down, Yards to go, Quarter, and Direction for pass plays only
+```{r}
+linear_model3 <- lm(exp_pts_diff~down+togo+quarter+direction, data = passdata)
+
+tidy(linear_model3)
+```
+
+## Analysis of pass middle frequency
+
+Passing up the middle appears to be very effective in goal line scenarios; how often are teams doing this?
+```{r}
+midfreq <- data %>% 
+  filter(!is.na(direction)) %>% 
+  group_by(direction,rush) %>% 
+  summarise(n())
+
+midfreq$rush <- as.character(midfreq$rush)
+
+midfreq$rush <- str_replace(midfreq$rush,"FALSE","Pass")
+
+midfreq$rush <- str_replace(midfreq$rush,"TRUE","Rush")
+
+colnames(midfreq)[2:3] <- c("play_type","count")
+
+tot <- sum(midfreq$count)
+
+midfreq <- midfreq %>% 
+  mutate(percent = paste0(round(count*100/tot,2),"%"))
+
+data.frame(midfreq)
+```
+
+Even though our analysis says that passes up the middle are the most effective play, NFL teams are running this with the lowest overall frequency!
+
+## Classification
+
+- Can we use these insights to correctly classify whether or not a team scored a touchdown on a given play?
+
+- In the slides that follow we will demonstrate several machine learning techniques we employed to attempt to answer this question
+
+- In all cases, we used a validation set approach. The data was split into training and testing sets randomly using the `sample()` function 
+
+## Logistic Regression
+
+Model Parameters
+```{r}
+set.seed(1)
+
+index <- sample(1:2694,1000)
+
+train <- nofgdata[-index,]
+test <- nofgdata[index,]
+
+logistic_model <- glm(touchdown~down+togo+rush+quarter+direction, data = train, family = "binomial")
+
+tidy(logistic_model)
+```
+
+Confusion Matrix (.42 threshold)
+```{r}
+probs <- predict(logistic_model, newdata = test, type = "response")
+
+preds <- ifelse(probs > 0.42,T,F)
+
+cmat_logistic <- confusionMatrix(preds, test$touchdown)
+
+cmat_logistic$table
+```
+
+Other Measures
+```{r}
+data.frame(value = c(cmat_logistic$overall[1:5],cmat_logistic$byClass[1:5]))
+```
+
+## Linear Discriminant Analysis
+
+Various model parameters
+```{r}
+lda_model <- lda(touchdown~down+togo+rush+quarter+direction, data = train)
+
+lda_model$means
+
+lda_model$scaling
+```
+
+Confusion Matrix
+```{r}
+preds <- predict(lda_model, newdata = test)
+
+cmat_lda <- confusionMatrix(preds$class, test$touchdown)
+
+cmat_lda$table
+```
+
+Other Measures
+```{r}
+data.frame(value = c(cmat_lda$overall[1:5],cmat_lda$byClass[1:5]))
+```
+
+## Quadratic Discriminant Analysis
+
+Various Model Parameters
+```{r}
+qda_model <- qda(touchdown~down+togo+rush+quarter+direction, data = train)
+
+qda_model$means
+
+qda_model$scaling
+```
+
+Confusion Matrix
+```{r}
+preds <- predict(qda_model, newdata = test)
+
+cmat_qda <- confusionMatrix(preds$class, test$touchdown)
+
+cmat_qda$table
+```
+
+Other Measures
+```{r}
+data.frame(value = c(cmat_qda$overall[1:5],cmat_qda$byClass[1:5]))
+```
+
+## K Nearest Neighbors (K=1)
+
+```{r}
+knn_train <- train
+
+knn_train$rush <- ifelse(knn_train$rush,1,0)
+
+knn_train$direction <- ifelse(knn_train$direction == "left",1,
+                              ifelse(train$direction == "right",2,3))
+
+knn_train$quarter <- ifelse(knn_train$quarter == "1",1,2)
+
+knn_train <- na.omit(knn_train)
+
+knn_test <- test
+
+knn_test$rush <- ifelse(knn_test$rush,1,0)
+
+knn_test$direction <- ifelse(knn_test$direction == "left",1,
+                              ifelse(test$direction == "right",2,3))
+
+knn_test$quarter <- ifelse(knn_test$quarter == "1",1,2)
+
+knn_test <- na.omit(knn_test)
+
+kcmat <- function(k){
+  set.seed(1)
+  knn_preds <- knn(knn_train[,c(5,7:8,24:25)],
+                  knn_test[,c(5,7:8,24:25)],
+                  knn_train$touchdown,
+                  k=k)
+  
+  cmat_knn <- confusionMatrix(knn_preds,knn_test$touchdown)
+  
+  tbl <- cmat_knn$table
+  
+  return(tbl)
+}
+
+kaccuracy <- function(k){
+  set.seed(1)
+  knn_preds <- knn(knn_train[,c(5,7:8,24:25)],
+                  knn_test[,c(5,7:8,24:25)],
+                  knn_train$touchdown,
+                  k=k)
+  
+  cmat_knn <- confusionMatrix(knn_preds,knn_test$touchdown)
+  
+  return(cmat_knn$overall[1])
+}
 
 
+kother<- function(k){
+  set.seed(1)
+  knn_preds <- knn(knn_train[,c(5,7:8,24:25)],
+                  knn_test[,c(5,7:8,24:25)],
+                  knn_train$touchdown,
+                  k=k)
+  
+  cmat_knn <- confusionMatrix(knn_preds,knn_test$touchdown)
+  
+  return(data.frame(value = c(cmat_knn$overall[1:5],cmat_knn$byClass[1:5])))
+}
+```
+
+Confusion Matrix
+```{r}
+kcmat(1)
+```
+
+Other Measures
+```{r}
+kother(1)
+```
+
+## Which k is best?
+
+```{r}
+accuracy <- sapply(1:100,function(i) kaccuracy(i)) 
+
+knn_data <- data.frame(k=1:100, accuracy)
+
+ggplot(knn_data, aes(k,accuracy))+ 
+  geom_line(col="blue")+ 
+  scale_x_continuous(breaks=seq(0,100,10))+ 
+  labs(y="Accuracy",title="Accuracy vs k for KNN")
+```
+
+k between 60 and 80 seem to do quite well
+
+## K Nearest Neighbors (K=70)
+
+Confusion Matrix
+```{r}
+kcmat(70)
+```
+
+Other Measures
+```{r}
+kother(70)
+```
+
+## Logistic Regression with Resampling (100 Resamples, .42 threshold)
+
+```{r}
+lst <- list()
+
+set.seed(1)
+
+for(i in 1:100){
+  
+  index <- sample(1:2694,1000)
+  
+  train <- nofgdata[-index,]
+  
+  test <- nofgdata[index,]
+  
+  logistic_model <- glm(touchdown~down+togo+rush+quarter+direction, data = train, family =
+                          "binomial")
+  
+  probs <- predict(logistic_model, newdata = test, type = "response")
+  
+  preds <- ifelse(probs > 0.42,T,F)
+  
+  cmat_logistic <- confusionMatrix(preds, test$touchdown)
+  
+  lst[[i]] <- c(cmat_logistic$overall[1],cmat_logistic$byClass[1:2])
+}
+
+lst
+```
+
+## Best Model
+
+```{r}
+set.seed(1)
+
+for(i in 1:9){
+  
+  index <- sample(1:2694,1000)
+  
+  train <- nofgdata[-index,]
+  
+  test <- nofgdata[index,]
+  
+  logistic_model <- glm(touchdown~down+togo+rush+quarter+direction, data = train, family =
+                          "binomial")
+  
+  probs <- predict(logistic_model, newdata = test, type = "response")
+  
+  preds <- ifelse(probs > 0.42,T,F)
+  
+  cmat_logistic <- confusionMatrix(preds, test$touchdown)
+}
+```
+
+Model Parameters
+```{r}
+tidy(logistic_model)
+```
+
+Confusion Matrix (.42 threshold)
+```{r}
+cmat_logistic$table
+```
+
+Other Measures
+```{r}
+data.frame(value = c(cmat_logistic$overall[1:5],cmat_logistic$byClass[1:5]))
+```
+
+## Conclusions
+
+- Found insight that passing up the middle is a very effective method that is underutilized in goal to go scenarios
+
+- Validated this analysis by finding that we could predict with good accuracy (considering how hard these things are to predict) whether or not a team would score a touchdown based on some basic information about the play
+
+- Next steps would be to communicate these results to decision makers in the NFL or other levels of football such as collegiate or high school (although there is no guarantee that the results would translate)
 
