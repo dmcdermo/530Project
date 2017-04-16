@@ -38,7 +38,7 @@ nfl$Location <- str_sub(nfl$Location, start = str_locate(nfl$Location," ")+1) %>
 nfl <- nfl %>% 
   filter(Location == ToGo)
 
-nfl <- nfl[-c(9:10,16)]
+nfl <- nfl[-c(9:10,15)]
 
 nfl <- nfl[c(1:3,8,4:7,24:25,9:23)]
 
